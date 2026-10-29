@@ -78,12 +78,21 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);
   background:#18212b;color:#fff;padding:12px 18px;border-radius:12px;font-size:15px;z-index:20;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.show{opacity:1}
+.hbtn.proj{background:#fff;color:var(--head);max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plist{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.pitem{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff;font-size:16px;text-align:left;color:var(--ink)}
+.pitem.cur{border:2px solid var(--head);background:#f4f7fa}
+.pitem .pn{flex:1;font-weight:700}
+.pitem .pc{color:var(--sub);font-size:14px}
+.pitem .mk{width:22px;height:22px;border-radius:50%;border:2px solid #aab4bf;flex:none}
+.pitem.cur .mk{border:7px solid var(--head)}
 @media (max-width:560px){.slots{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
   <h1 id="htitle">踏査写真</h1>
+  <button class="hbtn proj" id="btnProj">業務：<span id="projName"></span> ▾</button>
   <button class="hbtn" id="btnSettings">設定</button>
   <button class="hbtn primary" id="btnExport">ZIP保存</button>
 </header>
@@ -101,10 +110,24 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     <button class="btn primary" id="btnSaveList">リストを保存</button>
   </div>
   <hr>
-  <h2>写真データ</h2>
+  <h2>写真データ（表示中の業務）</h2>
   <p id="storeInfo">—</p>
   <div class="row">
-    <button class="btn danger" id="btnClearAll">この端末の写真をすべて削除</button>
+    <button class="btn danger" id="btnClearAll">この業務の写真をすべて削除</button>
+  </div>
+</div></dialog>
+
+<dialog id="dlgProj"><div class="dlg">
+  <h2>業務の切り替え</h2>
+  <p>業務ごとに橋梁リスト・写真・ZIPが分かれます。タップした業務に切り替わります。</p>
+  <div class="plist" id="plist"></div>
+  <div class="row">
+    <button class="btn" id="btnProjAdd">＋ 業務を追加</button>
+    <button class="btn" id="btnProjRename">表示中の業務名を変更</button>
+  </div>
+  <div class="row">
+    <button class="btn danger" id="btnProjDel">表示中の業務を削除</button>
+    <button class="btn primary" id="btnProjClose">閉じる</button>
   </div>
 </div></dialog>
 
@@ -121,10 +144,11 @@ const SLOTS = [
   {k:'ketashita', n:'桁下'},
   {k:'kabukou',   n:'下部工'},
 ];
-const MAX_EDGE = 1600;      // 縮小後の長辺(px)
-const JPEG_Q   = 0.82;
+const MAX_EDGE = 1280;      // 縮小後の長辺(px)：1280×960＝約120万画素（CALSの目安程度）
+const JPEG_Q   = 0.80;
 const DEFAULT_COUNT = 35;
-const LS_LIST = 'tousa.list', LS_EXPORT = 'tousa.lastExport';
+const LS_PROJ = 'tousa.projects', LS_CUR = 'tousa.current';
+let PID = '', LS_LIST = '', LS_EXPORT = '';   // 表示中の業務ID と その業務用の保存キー
 
 // ===== IndexedDB =====
 let dbp;
@@ -146,11 +170,15 @@ async function tx(mode, fn){
     t.onerror = ()=> rej(t.error); t.onabort = ()=> rej(t.error || new Error('保存できませんでした'));
   });
 }
-const putPhoto = (key,blob)=> tx('readwrite', s=> s.put({blob, ts:Date.now()}, key));
-const delPhoto = (key)=> tx('readwrite', s=> s.delete(key));
-const getPhoto = (key)=> tx('readonly', s=> s.get(key));
-const allKeys  = ()=> tx('readonly', s=> s.getAllKeys());
-const clearAll = ()=> tx('readwrite', s=> s.clear());
+// 写真のキーは「業務ID|No|部位」。画面側では業務IDを除いた「No|部位」で扱う
+const fk = (k)=> PID + '|' + k;
+const range = (pid)=> IDBKeyRange.bound(pid + '|', pid + '|\uffff');
+const putPhoto = (key,blob)=> tx('readwrite', s=> s.put({blob, ts:Date.now()}, fk(key)));
+const putRec   = (key,val)=> tx('readwrite', s=> s.put(val, fk(key)));
+const delPhoto = (key)=> tx('readwrite', s=> s.delete(fk(key)));
+const getPhoto = (key)=> tx('readonly', s=> s.get(fk(key)));
+const allKeys  = async ()=> (await tx('readonly', s=> s.getAllKeys(range(PID)))).map(k=> String(k).slice(PID.length+1));
+const clearAll = ()=> tx('readwrite', s=> s.delete(range(PID)));
 const keyOf = (no,k)=> no + '|' + k;
 const EXTRA = 'sonota';
 const getAll = ()=> tx('readonly', s=> s.getAll());
@@ -248,6 +276,7 @@ async function stats(){
 async function renderList(){
   freeUrls();
   document.getElementById('htitle').textContent = '踏査写真';
+  document.getElementById('projName').textContent = curProj().name;
   const list = loadList(), {m:st, total} = await stats(), last = localStorage.getItem(LS_EXPORT);
   app.innerHTML = '';
   app.append($(`<p class="summary">写真 ${total} 枚 ／ 最終ZIP保存：${last?new Date(+last).toLocaleString('ja-JP'):'未保存'}</p>`));
@@ -271,6 +300,7 @@ async function renderBridge(no){
   freeUrls();
   const list = loadList(), idx = list.findIndex(b=>b.no===no), b = list[idx] || {no, name:''};
   document.getElementById('htitle').textContent = 'No.' + no + (b.name?'　'+b.name:'');
+  document.getElementById('projName').textContent = curProj().name;
   app.innerHTML = '';
   const bar = $(`<div class="bar">
     <button class="nav" id="bk">← 一覧</button>
@@ -314,8 +344,8 @@ async function renderBridge(no){
   const d = await db();
   const extras = await new Promise((res,rej)=>{
     const out=[], r = d.transaction('photos').objectStore('photos')
-      .openCursor(IDBKeyRange.bound(no+'|'+EXTRA+'|', no+'|'+EXTRA+'|\uffff'));
-    r.onsuccess = ()=>{ const c=r.result; if(c){ out.push({key:c.key, ...c.value}); c.continue(); } else res(out); };
+      .openCursor(IDBKeyRange.bound(fk(no+'|'+EXTRA+'|'), fk(no+'|'+EXTRA+'|\uffff')));
+    r.onsuccess = ()=>{ const c=r.result; if(c){ out.push({key:String(c.key).slice(PID.length+1), ...c.value}); c.continue(); } else res(out); };
     r.onerror = ()=> rej(r.error);
   });
   extras.sort((a,b)=>a.ts-b.ts).forEach((rec,i)=>{
@@ -326,7 +356,7 @@ async function renderBridge(no){
     const [bm,br,bd] = el.querySelectorAll('.tbtn');
     bm.onclick = async ()=>{
       const v = prompt('この写真のメモ（例：支承、伸縮装置、添架物）', rec.memo||''); if(v===null) return;
-      await tx('readwrite', s=> s.put({blob:rec.blob, ts:rec.ts, memo:v.trim()}, rec.key)); renderBridge(no);
+      await putRec(rec.key, {blob:rec.blob, ts:rec.ts, memo:v.trim()}); renderBridge(no);
     };
     br.onclick = ()=> pick(no, {k:EXTRA, n:'その他'+(i+1)}, rec);
     bd.onclick = async ()=>{
@@ -350,7 +380,7 @@ picker.addEventListener('change', async ()=>{
     const blob = await resize(f);
     if(slot.k===EXTRA){
       const ts = rec ? rec.ts : Date.now(), key = rec ? rec.key : `${no}|${EXTRA}|${ts}`;
-      await tx('readwrite', s=> s.put({blob, ts, memo: rec ? (rec.memo||'') : ''}, key));
+      await putRec(key, {blob, ts, memo: rec ? (rec.memo||'') : ''});
     }else{
       await putPhoto(keyOf(no,slot.k), blob);
     }
@@ -381,7 +411,8 @@ async function exportZip(){
   files.push({name:'photo_list.csv', data:new TextEncoder().encode(csv)});
   const d = new Date(), stamp = d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')
             +'_'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');
-  const name = `tousa_photo_${stamp}.zip`;
+  const safe = curProj().name.replace(/[\\/:*?"<>|\s]+/g,'_').slice(0,40) || 'gyomu';
+  const name = `${safe}_tousa_photo_${stamp}.zip`;
   const zip = new File([makeZip(files)], name, {type:'application/zip'});
   try{
     if(navigator.canShare && navigator.canShare({files:[zip]})){
@@ -401,8 +432,8 @@ const dlg = document.getElementById('dlgSettings');
 document.getElementById('btnSettings').onclick = async ()=>{
   const v = localStorage.getItem(LS_LIST);
   document.getElementById('taList').value = v ? JSON.parse(v).map(b=>b.no+'\t'+b.name).join('\n') : '';
-  const n = (await allKeys()).length; let info = `この端末に写真 ${n} 枚`;
-  try{ const e = await navigator.storage.estimate(); info += `（使用 約${Math.round(e.usage/1048576)}MB）`; }catch(_){}
+  const n = (await allKeys()).length; let info = `業務「${curProj().name}」の写真 ${n} 枚`;
+  try{ const e = await navigator.storage.estimate(); info += `（端末全体の使用 約${Math.round(e.usage/1048576)}MB）`; }catch(_){}
   document.getElementById('storeInfo').textContent = info + '。ZIP保存してPCへ渡した後に削除してください。';
   dlg.showModal();
 };
@@ -419,10 +450,82 @@ document.getElementById('btnSaveList').onclick = ()=>{
 };
 document.getElementById('btnClearAll').onclick = async ()=>{
   const last = localStorage.getItem(LS_EXPORT);
-  if(!confirm('この端末の写真をすべて削除します。' + (last?'':'\n※まだ一度もZIP保存していません。') + '\nよろしいですか？')) return;
+  if(!confirm(`業務「${curProj().name}」の写真をすべて削除します。` + (last?'':'\n※この業務はまだ一度もZIP保存していません。') + '\nよろしいですか？')) return;
   await clearAll(); localStorage.removeItem(LS_EXPORT); dlg.close(); location.hash=''; route(); toast('削除しました');
 };
 document.getElementById('btnExport').onclick = exportZip;
+
+// ===== 業務（プロジェクト）管理 =====
+function projects(){
+  try{ const v = JSON.parse(localStorage.getItem(LS_PROJ)||'null'); if(Array.isArray(v) && v.length) return v; }catch(e){}
+  return [];
+}
+function saveProjects(p){ localStorage.setItem(LS_PROJ, JSON.stringify(p)); }
+function curProj(){ return projects().find(p=>p.id===PID) || {id:PID, name:'業務'}; }
+function setProject(id){
+  PID = id; LS_LIST = 'tousa.list.' + id; LS_EXPORT = 'tousa.lastExport.' + id;
+  localStorage.setItem(LS_CUR, id);
+}
+const newId = ()=> 'p' + Date.now().toString(36);
+
+// 旧版（業務機能なし）のデータを「業務1」に引き継ぐ
+async function initProjects(){
+  let p = projects();
+  if(!p.length){
+    p = [{id:'p1', name:'業務1'}]; saveProjects(p);
+    const ol = localStorage.getItem('tousa.list'), oe = localStorage.getItem('tousa.lastExport');
+    if(ol){ localStorage.setItem('tousa.list.p1', ol); localStorage.removeItem('tousa.list'); }
+    if(oe){ localStorage.setItem('tousa.lastExport.p1', oe); localStorage.removeItem('tousa.lastExport'); }
+    const d = await db();
+    await new Promise((res,rej)=>{
+      const t = d.transaction('photos','readwrite'), st = t.objectStore('photos');
+      st.openCursor().onsuccess = (e)=>{
+        const c = e.target.result; if(!c) return;
+        const k = String(c.key);
+        if(/^\d/.test(k)){ st.put(c.value, 'p1|' + k); st.delete(c.key); }   // 旧キーは数字で始まる
+        c.continue();
+      };
+      t.oncomplete = res; t.onerror = ()=> rej(t.error);
+    });
+  }
+  const cur = localStorage.getItem(LS_CUR);
+  setProject(p.some(x=>x.id===cur) ? cur : p[0].id);
+}
+
+const dlgP = document.getElementById('dlgProj');
+async function openProj(){
+  const d = await db();
+  const keys = await new Promise((res,rej)=>{ const r = d.transaction('photos').objectStore('photos').getAllKeys(); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
+  const cnt = new Map(); keys.forEach(k=>{ const id = String(k).split('|')[0]; cnt.set(id,(cnt.get(id)||0)+1); });
+  const box = document.getElementById('plist'); box.innerHTML = '';
+  for(const p of projects()){
+    const el = $(`<button class="pitem ${p.id===PID?'cur':''}"><span class="mk"></span><span class="pn">${esc(p.name)}</span><span class="pc">写真 ${cnt.get(p.id)||0} 枚</span></button>`);
+    el.onclick = ()=>{ setProject(p.id); dlgP.close(); location.hash=''; route(); toast(`「${p.name}」に切り替えました`); };
+    box.append(el);
+  }
+  if(!dlgP.open) dlgP.showModal();
+}
+document.getElementById('btnProj').onclick = openProj;
+document.getElementById('btnProjClose').onclick = ()=> dlgP.close();
+document.getElementById('btnProjAdd').onclick = ()=>{
+  const p = projects(), v = prompt('新しい業務名（例：R7焼津市橋梁点検）', `業務${p.length+1}`);
+  if(v===null || !v.trim()) return;
+  const id = newId(); p.push({id, name:v.trim()}); saveProjects(p);
+  setProject(id); dlgP.close(); location.hash=''; route(); toast(`「${v.trim()}」を追加しました`);
+};
+document.getElementById('btnProjRename').onclick = ()=>{
+  const p = projects(), c = p.find(x=>x.id===PID); if(!c) return;
+  const v = prompt('業務名を変更', c.name); if(v===null || !v.trim()) return;
+  c.name = v.trim(); saveProjects(p); openProj(); route();
+};
+document.getElementById('btnProjDel').onclick = async ()=>{
+  const c = curProj(), n = (await allKeys()).length, last = localStorage.getItem(LS_EXPORT);
+  if(!confirm(`業務「${c.name}」を削除します（写真 ${n} 枚と橋梁リストも消えます）。` + (n && !last ? '\n※この業務はまだ一度もZIP保存していません。' : '') + '\nよろしいですか？')) return;
+  await clearAll(); localStorage.removeItem(LS_LIST); localStorage.removeItem(LS_EXPORT);
+  let p = projects().filter(x=>x.id!==PID);
+  if(!p.length) p = [{id:newId(), name:'業務1'}];
+  saveProjects(p); setProject(p[0].id); dlgP.close(); location.hash=''; route(); toast('業務を削除しました');
+};
 
 // ===== ルーティング =====
 function route(){
@@ -431,7 +534,7 @@ function route(){
   window.scrollTo(0,0);
 }
 addEventListener('hashchange', route);
-route();
+initProjects().then(route).catch(e=> app.textContent = '起動エラー：' + e.message);
 
 // オフライン対応・保存領域の保護
 if('serviceWorker' in navigator && location.protocol==='https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
