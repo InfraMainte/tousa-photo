@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="踏査写真">
+<meta name="theme-color" content="#1f2a37">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>踏査写真</title>
+<style>
+:root{
+  --bg:#eef1f4; --panel:#fff; --ink:#18212b; --sub:#5b6773; --line:#cfd6dd;
+  --head:#1f2a37; --accent:#f2b705; --ok:#2e8b57; --warn:#c0392b; --tile:#f7f9fb;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;}
+body{padding-bottom:env(safe-area-inset-bottom)}
+header{position:sticky;top:0;z-index:5;background:var(--head);color:#fff;
+  padding:calc(10px + env(safe-area-inset-top)) 16px 10px;display:flex;align-items:center;gap:10px}
+header h1{font-size:19px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hbtn{background:#334355;color:#fff;border:0;border-radius:10px;padding:11px 14px;font-size:16px;font-weight:600}
+.hbtn.primary{background:var(--accent);color:#1b1b1b}
+main{padding:16px;max-width:1100px;margin:0 auto}
+.summary{color:var(--sub);font-size:14px;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:left;
+  font-size:15px;color:var(--ink);display:flex;flex-direction:column;gap:6px;min-height:92px}
+.card .no{font-size:22px;font-weight:700}
+.card .nm{color:var(--sub);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dots{display:flex;gap:5px;margin-top:auto}
+.dot{width:14px;height:14px;border-radius:50%;background:#dfe4e9;border:1px solid #c5ccd3}
+.dot.on{background:var(--ok);border-color:var(--ok)}
+.card.done{border-color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok)}
+.bar{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.bar .title{flex:1;font-size:20px;font-weight:700}
+.bar .title small{display:block;font-size:14px;color:var(--sub);font-weight:500}
+.nav{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-size:16px;color:var(--ink)}
+.nav:disabled{opacity:.35}
+.slots{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.slot{background:var(--panel);border:2px dashed #aab4bf;border-radius:14px;position:relative;overflow:hidden;
+  aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;flex-direction:column}
+.slot.wide{grid-column:1/-1;aspect-ratio:auto;height:200px}
+.slot.has{border:2px solid var(--ok);background:#111}
+.slot img{width:100%;height:100%;object-fit:contain;display:block}
+.slot .lbl{position:absolute;top:8px;left:8px;background:var(--head);color:#fff;font-weight:700;
+  font-size:16px;padding:5px 11px;border-radius:8px;z-index:2}
+.slot .empty{font-size:17px;color:var(--sub);text-align:center;line-height:1.7;pointer-events:none}
+.slot .empty b{display:block;font-size:40px;color:#8a96a3;line-height:1}
+.slot .tools{position:absolute;right:8px;bottom:8px;display:flex;gap:8px;z-index:2}
+.tbtn{border:0;border-radius:10px;padding:11px 15px;font-size:15px;font-weight:600;background:rgba(255,255,255,.92);color:var(--ink)}
+.tbtn.del{color:var(--warn)}
+.slot .hit{position:absolute;inset:0;background:transparent;border:0;width:100%}
+.sec{margin:22px 0 10px;font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px}
+.sec small{font-size:13px;color:var(--sub);font-weight:500}
+.slot.add{border-style:dashed;background:var(--tile)}
+.slot .memo{position:absolute;left:8px;right:8px;bottom:62px;color:#fff;font-size:15px;font-weight:600;
+  text-shadow:0 1px 3px #000;z-index:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.editname{background:none;border:0;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.editname small::after{content:"　✎ 編集";color:#2b6cb0;font-weight:600}
+.card.addcard{align-items:center;justify-content:center;border-style:dashed;color:var(--sub);font-weight:600}
+.card .ex{font-size:13px;color:var(--sub);margin-left:4px}
+.busy{position:absolute;inset:0;background:rgba(255,255,255,.8);display:flex;align-items:center;justify-content:center;font-weight:600;z-index:3}
+dialog{border:0;border-radius:16px;padding:0;width:min(640px,94vw);max-height:90vh}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dlg{padding:20px}
+.dlg h2{margin:0 0 6px;font-size:19px}
+.dlg p{color:var(--sub);font-size:14px;margin:6px 0 10px;line-height:1.6}
+textarea{width:100%;height:220px;font-size:15px;border:1px solid var(--line);border-radius:10px;padding:10px;font-family:inherit}
+.row{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:12px 16px;font-size:16px;font-weight:600;color:var(--ink)}
+.btn.primary{background:var(--head);color:#fff;border-color:var(--head)}
+.btn.danger{color:var(--warn);border-color:#e3b2ac}
+hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);
+  background:#18212b;color:#fff;padding:12px 18px;border-radius:12px;font-size:15px;z-index:20;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+@media (max-width:560px){.slots{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="htitle">踏査写真</h1>
+  <button class="hbtn" id="btnSettings">設定</button>
+  <button class="hbtn primary" id="btnExport">ZIP保存</button>
+</header>
+<main id="app"></main>
+<input type="file" id="picker" accept="image/*" hidden>
+
+<dialog id="dlgSettings"><div class="dlg">
+  <h2>橋梁リスト</h2>
+  <p>Excelの「点検橋梁一覧表」で <b>No列と橋梁名列（A〜B列）</b> をコピーして貼り付けてください。<br>
+     1行に「No（タブ／カンマ／空白）橋梁名」。空のままなら No.1〜35 を表示します。<br>
+     1橋ずつ入れる場合は、一覧の「＋ 橋を追加」か、各橋の画面で橋梁名をタップしてください。</p>
+  <textarea id="taList" placeholder="1	156号橋&#10;2	○○橋"></textarea>
+  <div class="row">
+    <button class="btn" id="btnCloseSet">閉じる</button>
+    <button class="btn primary" id="btnSaveList">リストを保存</button>
+  </div>
+  <hr>
+  <h2>写真データ</h2>
+  <p id="storeInfo">—</p>
+  <div class="row">
+    <button class="btn danger" id="btnClearAll">この端末の写真をすべて削除</button>
+  </div>
+</div></dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+// ===== 設定 =====
+// k はZIP内ファイル名（Excelマクロの検索キー）。表示順＝踏査表の枠
+const SLOTS = [
+  {k:'kyoureki',  n:'橋歴板', wide:true},
+  {k:'kyoumen',   n:'橋面'},
+  {k:'sokumen',   n:'側面'},
+  {k:'ketashita', n:'桁下'},
+  {k:'kabukou',   n:'下部工'},
+];
+const MAX_EDGE = 1600;      // 縮小後の長辺(px)
+const JPEG_Q   = 0.82;
+const DEFAULT_COUNT = 35;
+const LS_LIST = 'tousa.list', LS_EXPORT = 'tousa.lastExport';
+
+// ===== IndexedDB =====
+let dbp;
+function db(){
+  if(!dbp) dbp = new Promise((res,rej)=>{
+    const r = indexedDB.open('tousa-photo',1);
+    r.onupgradeneeded = ()=> r.result.createObjectStore('photos');
+    r.onsuccess = ()=> res(r.result);
+    r.onerror = ()=> rej(r.error);
+  });
+  return dbp;
+}
+async function tx(mode, fn){
+  const d = await db();
+  return new Promise((res,rej)=>{
+    const t = d.transaction('photos', mode), s = t.objectStore('photos');
+    const out = fn(s);
+    t.oncomplete = ()=> res(out && 'result' in out ? out.result : undefined);
+    t.onerror = ()=> rej(t.error); t.onabort = ()=> rej(t.error || new Error('保存できませんでした'));
+  });
+}
+const putPhoto = (key,blob)=> tx('readwrite', s=> s.put({blob, ts:Date.now()}, key));
+const delPhoto = (key)=> tx('readwrite', s=> s.delete(key));
+const getPhoto = (key)=> tx('readonly', s=> s.get(key));
+const allKeys  = ()=> tx('readonly', s=> s.getAllKeys());
+const clearAll = ()=> tx('readwrite', s=> s.clear());
+const keyOf = (no,k)=> no + '|' + k;
+const EXTRA = 'sonota';
+const getAll = ()=> tx('readonly', s=> s.getAll());
+
+// ===== 橋梁リスト =====
+function loadList(){
+  try{ const v = JSON.parse(localStorage.getItem(LS_LIST)||'null'); if(Array.isArray(v) && v.length) return v; }catch(e){}
+  return Array.from({length:DEFAULT_COUNT},(_,i)=>({no:i+1,name:''}));
+}
+function saveList(l){ l.sort((a,b)=>a.no-b.no); localStorage.setItem(LS_LIST, JSON.stringify(l)); }
+function editBridge(no){
+  const l = loadList(); let b = l.find(x=>x.no===no);
+  const v = prompt(`No.${no} の橋梁名を入力`, b ? b.name : '');
+  if(v===null) return false;
+  if(!b){ b={no,name:''}; l.push(b); }
+  b.name = v.trim(); saveList(l); return true;
+}
+function addBridge(){
+  const l = loadList(), next = l.reduce((m,b)=>Math.max(m,b.no),0)+1;
+  const n = prompt('追加する橋のNo', String(next)); if(n===null) return;
+  const no = parseInt(n,10); if(!(no>0)){ alert('Noは数字で入力してください。'); return; }
+  if(l.some(b=>b.no===no)){ alert(`No.${no} は既にあります。`); return; }
+  const name = prompt(`No.${no} の橋梁名`, ''); if(name===null) return;
+  l.push({no, name:name.trim()}); saveList(l); location.hash = '#b/' + no;
+}
+function parseList(text){
+  const out=[]; let seq=0;
+  for(const raw of text.split(/\r?\n/)){
+    const line = raw.trim(); if(!line) continue;
+    const m = line.match(/^(\d{1,3})[\t,，\s　]+(.*)$/);
+    if(m){ out.push({no:+m[1], name:m[2].trim()}); seq=+m[1]; }
+    else if(/^\d{1,3}$/.test(line)){ out.push({no:+line,name:''}); seq=+line; }
+    else if(!/^(No|例)/i.test(line)){ seq++; out.push({no:seq,name:line}); }
+  }
+  const seen=new Set(); return out.filter(b=> b.no>0 && !seen.has(b.no) && seen.add(b.no));
+}
+
+// ===== 画像縮小 =====
+async function resize(file){
+  const url = URL.createObjectURL(file);
+  try{
+    const img = new Image(); img.src = url; await img.decode();
+    const w = img.naturalWidth, h = img.naturalHeight, s = Math.min(1, MAX_EDGE/Math.max(w,h));
+    const c = document.createElement('canvas'); c.width = Math.round(w*s); c.height = Math.round(h*s);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);   // EXIFの向きはSafariが反映済み
+    return await new Promise((res,rej)=> c.toBlob(b=> b?res(b):rej(new Error('変換失敗')),'image/jpeg',JPEG_Q));
+  } finally { URL.revokeObjectURL(url); }
+}
+
+// ===== ZIP（無圧縮・ASCIIファイル名） =====
+const CRC = (()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function crc32(u8){let c=0xFFFFFFFF;for(let i=0;i<u8.length;i++)c=CRC[(c^u8[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+function makeZip(files){
+  const enc=new TextEncoder(), parts=[], cen=[]; let off=0, cenSize=0;
+  const d=new Date(), time=(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1),
+        date=((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate();
+  for(const f of files){
+    const name=enc.encode(f.name), crc=crc32(f.data), size=f.data.length;
+    const lh=new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true); lh.setUint16(4,20,true); lh.setUint16(6,0x0800,true); lh.setUint16(8,0,true);
+    lh.setUint16(10,time,true); lh.setUint16(12,date,true); lh.setUint32(14,crc,true);
+    lh.setUint32(18,size,true); lh.setUint32(22,size,true); lh.setUint16(26,name.length,true); lh.setUint16(28,0,true);
+    parts.push(lh.buffer,name,f.data);
+    const ch=new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true); ch.setUint16(4,20,true); ch.setUint16(6,20,true); ch.setUint16(8,0x0800,true);
+    ch.setUint16(10,0,true); ch.setUint16(12,time,true); ch.setUint16(14,date,true); ch.setUint32(16,crc,true);
+    ch.setUint32(20,size,true); ch.setUint32(24,size,true); ch.setUint16(28,name.length,true);
+    ch.setUint32(38,0,true); ch.setUint32(42,off,true);
+    cen.push(ch.buffer,name); cenSize+=46+name.length; off+=30+name.length+size;
+  }
+  const end=new DataView(new ArrayBuffer(22));
+  end.setUint32(0,0x06054b50,true); end.setUint16(8,files.length,true); end.setUint16(10,files.length,true);
+  end.setUint32(12,cenSize,true); end.setUint32(16,off,true);
+  return new Blob([...parts,...cen,end.buffer],{type:'application/zip'});
+}
+
+// ===== 画面 =====
+const app = document.getElementById('app'), picker = document.getElementById('picker');
+let urls = [], pickTarget = null;
+const $ = (h)=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstElementChild;};
+const esc = (s)=> String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2200);}
+function freeUrls(){urls.forEach(u=>URL.revokeObjectURL(u));urls=[];}
+
+async function stats(){
+  const m = new Map(), keys = await allKeys();
+  for(const key of keys){
+    const [n,k] = String(key).split('|'), no=+n;
+    if(!m.has(no)) m.set(no,{set:new Set(), ex:0});
+    if(k===EXTRA) m.get(no).ex++; else m.get(no).set.add(k);
+  }
+  return {m, total:keys.length};
+}
+
+async function renderList(){
+  freeUrls();
+  document.getElementById('htitle').textContent = '踏査写真';
+  const list = loadList(), {m:st, total} = await stats(), last = localStorage.getItem(LS_EXPORT);
+  app.innerHTML = '';
+  app.append($(`<p class="summary">写真 ${total} 枚 ／ 最終ZIP保存：${last?new Date(+last).toLocaleString('ja-JP'):'未保存'}</p>`));
+  const g = $('<div class="grid"></div>');
+  for(const b of list){
+    const x = st.get(b.no) || {set:new Set(), ex:0};
+    const dots = SLOTS.map(s=>`<span class="dot ${x.set.has(s.k)?'on':''}"></span>`).join('');
+    const el = $(`<button class="card ${x.set.size>=SLOTS.length?'done':''}"><span class="no">No.${b.no}</span>
+      <span class="nm">${esc(b.name||'（橋梁名未設定）')}</span>
+      <span class="dots">${dots}${x.ex?`<span class="ex">その他${x.ex}</span>`:''}</span></button>`);
+    el.onclick = ()=> location.hash = '#b/' + b.no;
+    g.append(el);
+  }
+  const add = $('<button class="card addcard">＋ 橋を追加</button>');
+  add.onclick = addBridge;
+  g.append(add);
+  app.append(g);
+}
+
+async function renderBridge(no){
+  freeUrls();
+  const list = loadList(), idx = list.findIndex(b=>b.no===no), b = list[idx] || {no, name:''};
+  document.getElementById('htitle').textContent = 'No.' + no + (b.name?'　'+b.name:'');
+  app.innerHTML = '';
+  const bar = $(`<div class="bar">
+    <button class="nav" id="bk">← 一覧</button>
+    <button class="title editname" id="en">No.${no}<small>${esc(b.name||'橋梁名未設定')}</small></button>
+    <button class="nav" id="pv">前</button><button class="nav" id="nx">次</button></div>`);
+  bar.querySelector('#bk').onclick = ()=> location.hash = '';
+  bar.querySelector('#en').onclick = ()=>{ if(editBridge(no)) renderBridge(no); };
+  const pv = bar.querySelector('#pv'), nx = bar.querySelector('#nx');
+  pv.disabled = idx<=0; nx.disabled = idx<0 || idx>=list.length-1;
+  pv.onclick = ()=> location.hash = '#b/' + list[idx-1].no;
+  nx.onclick = ()=> location.hash = '#b/' + list[idx+1].no;
+  app.append(bar);
+
+  const wrap = $('<div class="slots"></div>');
+  for(const s of SLOTS){
+    const rec = await getPhoto(keyOf(no,s.k));
+    const el = $(`<div class="slot ${s.wide?'wide':''} ${rec?'has':''}"><span class="lbl">${s.n}</span></div>`);
+    if(rec){
+      const u = URL.createObjectURL(rec.blob); urls.push(u);
+      el.append($(`<img alt="${s.n}" src="${u}">`));
+      const tools = $('<div class="tools"><button class="tbtn">差し替え</button><button class="tbtn del">削除</button></div>');
+      tools.children[0].onclick = ()=> pick(no,s);
+      tools.children[1].onclick = async ()=>{
+        if(!confirm(`No.${no} の「${s.n}」写真を削除しますか？`)) return;
+        await delPhoto(keyOf(no,s.k)); renderBridge(no);
+      };
+      el.append(tools);
+    }else{
+      el.append($(`<div class="empty"><b>＋</b>タップして撮影／選択</div>`));
+      const hit = $('<button class="hit" aria-label="写真を追加"></button>');
+      hit.onclick = ()=> pick(no,s);
+      el.append(hit);
+    }
+    wrap.append(el);
+  }
+  app.append(wrap);
+
+  // その他（枚数自由・Excelには貼らない参考写真）
+  app.append($('<div class="sec">その他<small>何枚でも追加可。Excelの枠には貼られず、ZIPに参考写真として入ります</small></div>'));
+  const ex = $('<div class="slots"></div>');
+  const d = await db();
+  const extras = await new Promise((res,rej)=>{
+    const out=[], r = d.transaction('photos').objectStore('photos')
+      .openCursor(IDBKeyRange.bound(no+'|'+EXTRA+'|', no+'|'+EXTRA+'|\uffff'));
+    r.onsuccess = ()=>{ const c=r.result; if(c){ out.push({key:c.key, ...c.value}); c.continue(); } else res(out); };
+    r.onerror = ()=> rej(r.error);
+  });
+  extras.sort((a,b)=>a.ts-b.ts).forEach((rec,i)=>{
+    const u = URL.createObjectURL(rec.blob); urls.push(u);
+    const el = $(`<div class="slot has"><span class="lbl">その他${i+1}</span><img alt="その他" src="${u}">
+      <div class="memo">${esc(rec.memo||'')}</div>
+      <div class="tools"><button class="tbtn">メモ</button><button class="tbtn">差し替え</button><button class="tbtn del">削除</button></div></div>`);
+    const [bm,br,bd] = el.querySelectorAll('.tbtn');
+    bm.onclick = async ()=>{
+      const v = prompt('この写真のメモ（例：支承、伸縮装置、添架物）', rec.memo||''); if(v===null) return;
+      await tx('readwrite', s=> s.put({blob:rec.blob, ts:rec.ts, memo:v.trim()}, rec.key)); renderBridge(no);
+    };
+    br.onclick = ()=> pick(no, {k:EXTRA, n:'その他'+(i+1)}, rec);
+    bd.onclick = async ()=>{
+      if(!confirm(`No.${no} の「その他${i+1}」を削除しますか？`)) return;
+      await delPhoto(rec.key); renderBridge(no);
+    };
+    ex.append(el);
+  });
+  const addTile = $(`<div class="slot add"><div class="empty"><b>＋</b>その他を追加</div><button class="hit" aria-label="その他を追加"></button></div>`);
+  addTile.querySelector('.hit').onclick = ()=> pick(no, {k:EXTRA, n:'その他'}, null);
+  ex.append(addTile);
+  app.append(ex);
+}
+
+function pick(no,slot,rec){ pickTarget = {no,slot,rec}; picker.value=''; picker.click(); }
+picker.addEventListener('change', async ()=>{
+  const f = picker.files && picker.files[0]; if(!f || !pickTarget) return;
+  const {no,slot,rec} = pickTarget; pickTarget = null;
+  const busy = $('<div class="busy">保存中…</div>'); document.body.append(busy); busy.style.position='fixed';
+  try{
+    const blob = await resize(f);
+    if(slot.k===EXTRA){
+      const ts = rec ? rec.ts : Date.now(), key = rec ? rec.key : `${no}|${EXTRA}|${ts}`;
+      await tx('readwrite', s=> s.put({blob, ts, memo: rec ? (rec.memo||'') : ''}, key));
+    }else{
+      await putPhoto(keyOf(no,slot.k), blob);
+    }
+    toast(`No.${no}「${slot.n}」を保存しました`);
+  }catch(e){ alert('保存できませんでした：' + (e && e.message || e)); }
+  finally{ busy.remove(); }
+  renderBridge(no);
+});
+
+// ===== ZIP保存 =====
+async function exportZip(){
+  const keys = (await allKeys()).map(String);
+  if(!keys.length){ alert('保存する写真がありません。'); return; }
+  const files = [], rows = [['No','橋梁名','部位','ファイル名','メモ']], names = new Map(loadList().map(b=>[b.no,b.name]));
+  const recs = [];
+  for(const key of keys){ const [no,k] = key.split('|'); recs.push({no:+no, k, key, rec: await getPhoto(key)}); }
+  const order = (k)=>{ const i = SLOTS.findIndex(s=>s.k===k); return i<0 ? 99 : i; };
+  recs.sort((a,b)=> a.no-b.no || order(a.k)-order(b.k) || a.rec.ts-b.rec.ts);
+  const exN = new Map();
+  for(const r of recs){
+    const p = String(r.no).padStart(2,'0'); let fname, label;
+    if(r.k===EXTRA){ const n=(exN.get(r.no)||0)+1; exN.set(r.no,n); fname=`${p}_sonota_${String(n).padStart(2,'0')}.jpg`; label='その他'+n; }
+    else { fname=`${p}_${r.k}.jpg`; label=SLOTS[order(r.k)].n; }
+    files.push({name:fname, data:new Uint8Array(await r.rec.blob.arrayBuffer())});
+    rows.push([r.no, names.get(r.no)||'', label, fname, r.rec.memo||'']);
+  }
+  const csv = '\ufeff' + rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  files.push({name:'photo_list.csv', data:new TextEncoder().encode(csv)});
+  const d = new Date(), stamp = d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')
+            +'_'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');
+  const name = `tousa_photo_${stamp}.zip`;
+  const zip = new File([makeZip(files)], name, {type:'application/zip'});
+  try{
+    if(navigator.canShare && navigator.canShare({files:[zip]})){
+      await navigator.share({files:[zip], title:name});
+    }else{
+      const a = document.createElement('a'); a.href = URL.createObjectURL(zip); a.download = name;
+      document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},4000);
+    }
+    localStorage.setItem(LS_EXPORT, String(Date.now()));
+    toast(`${files.length-1}枚をZIPにしました`);
+    if(!location.hash) renderList();
+  }catch(e){ if(e && e.name!=='AbortError') alert('ZIP保存に失敗しました：' + e.message); }
+}
+
+// ===== 設定 =====
+const dlg = document.getElementById('dlgSettings');
+document.getElementById('btnSettings').onclick = async ()=>{
+  const v = localStorage.getItem(LS_LIST);
+  document.getElementById('taList').value = v ? JSON.parse(v).map(b=>b.no+'\t'+b.name).join('\n') : '';
+  const n = (await allKeys()).length; let info = `この端末に写真 ${n} 枚`;
+  try{ const e = await navigator.storage.estimate(); info += `（使用 約${Math.round(e.usage/1048576)}MB）`; }catch(_){}
+  document.getElementById('storeInfo').textContent = info + '。ZIP保存してPCへ渡した後に削除してください。';
+  dlg.showModal();
+};
+document.getElementById('btnCloseSet').onclick = ()=> dlg.close();
+document.getElementById('btnSaveList').onclick = ()=>{
+  const t = document.getElementById('taList').value.trim();
+  if(!t){ localStorage.removeItem(LS_LIST); }
+  else{
+    const l = parseList(t);
+    if(!l.length){ alert('リストを読み取れませんでした。'); return; }
+    localStorage.setItem(LS_LIST, JSON.stringify(l));
+  }
+  dlg.close(); route(); toast('リストを保存しました');
+};
+document.getElementById('btnClearAll').onclick = async ()=>{
+  const last = localStorage.getItem(LS_EXPORT);
+  if(!confirm('この端末の写真をすべて削除します。' + (last?'':'\n※まだ一度もZIP保存していません。') + '\nよろしいですか？')) return;
+  await clearAll(); localStorage.removeItem(LS_EXPORT); dlg.close(); location.hash=''; route(); toast('削除しました');
+};
+document.getElementById('btnExport').onclick = exportZip;
+
+// ===== ルーティング =====
+function route(){
+  const m = location.hash.match(/^#b\/(\d+)$/);
+  (m ? renderBridge(+m[1]) : renderList()).catch(e=> app.textContent = 'エラー：' + e.message);
+  window.scrollTo(0,0);
+}
+addEventListener('hashchange', route);
+route();
+
+// オフライン対応・保存領域の保護
+if('serviceWorker' in navigator && location.protocol==='https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
+if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
+</script>
+</body>
+</html>
