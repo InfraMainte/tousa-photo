@@ -86,6 +86,10 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 .pitem .pc{color:var(--sub);font-size:14px}
 .pitem .mk{width:22px;height:22px;border-radius:50%;border:2px solid #aab4bf;flex:none}
 .pitem.cur .mk{border:7px solid var(--head)}
+.startbar{display:flex;align-items:center;gap:12px;margin:-4px 0 14px;flex-wrap:wrap}
+.startbtn{border:0;border-radius:12px;padding:13px 18px;font-size:17px;font-weight:700;background:var(--ok);color:#fff}
+.startbtn.on{background:#e7f3ec;color:var(--ok);border:2px solid var(--ok)}
+.startinfo{color:var(--sub);font-size:14px;line-height:1.5}
 @media (max-width:560px){.slots{grid-template-columns:1fr}}
 </style>
 </head>
@@ -148,7 +152,7 @@ const MAX_EDGE = 1280;      // 縮小後の長辺(px)：1280×960＝約120万画
 const JPEG_Q   = 0.80;
 const DEFAULT_COUNT = 35;
 const LS_PROJ = 'tousa.projects', LS_CUR = 'tousa.current';
-let PID = '', LS_LIST = '', LS_EXPORT = '';   // 表示中の業務ID と その業務用の保存キー
+let PID = '', LS_LIST = '', LS_EXPORT = '', LS_LOG = '';   // 表示中の業務ID と その業務用の保存キー
 
 // ===== IndexedDB =====
 let dbp;
@@ -214,6 +218,42 @@ function parseList(text){
     else if(!/^(No|例)/i.test(line)){ seq++; out.push({no:seq,name:line}); }
   }
   const seen=new Set(); return out.filter(b=> b.no>0 && !seen.has(b.no) && seen.add(b.no));
+}
+
+// ===== 踏査開始の記録（元写真の仕分け用） =====
+function loadLog(){ try{ const v = JSON.parse(localStorage.getItem(LS_LOG)||'[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; } }
+function addStart(no){ const l = loadLog(); l.push({no, t:Date.now()}); localStorage.setItem(LS_LOG, JSON.stringify(l)); }
+const hm = (t)=>{ const d=new Date(t); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+function fmtDT(t){
+  const d=new Date(t), z=(n)=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}/${z(d.getMonth()+1)}/${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
+}
+
+// JPEGのEXIFから撮影日時（DateTimeOriginal）を読む。なければ null
+async function exifTime(file){
+  try{
+    const buf = await file.slice(0, 262144).arrayBuffer(), v = new DataView(buf);
+    if(v.getUint16(0) !== 0xFFD8) return null;
+    let p = 2;
+    while(p + 4 < v.byteLength){
+      const mk = v.getUint16(p), len = v.getUint16(p+2);
+      if(mk === 0xFFE1 && v.getUint32(p+4) === 0x45786966){          // "Exif"
+        const t = p + 10, le = v.getUint16(t) === 0x4949;
+        const u16 = (o)=> v.getUint16(t+o, le), u32 = (o)=> v.getUint32(t+o, le);
+        const str = (o,n)=>{ let r=''; for(let i=0;i<n-1;i++){ const c=v.getUint8(t+o+i); if(!c) break; r+=String.fromCharCode(c);} return r; };
+        const find = (ifd, tag)=>{ const n=u16(ifd); for(let i=0;i<n;i++){ const e=ifd+2+i*12; if(u16(e)===tag) return e; } return -1; };
+        const ifd0 = u32(4); let val = null;
+        const ex = find(ifd0, 0x8769);
+        if(ex >= 0){ const exi = u32(ex+8); for(const tg of [0x9003,0x9004]){ const e=find(exi,tg); if(e>=0){ val=str(u32(e+8),u32(e+4)); break; } } }
+        if(!val){ const e=find(ifd0,0x0132); if(e>=0) val=str(u32(e+8),u32(e+4)); }
+        const m = val && val.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+        return m ? new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime() : null;
+      }
+      if((mk & 0xFF00) !== 0xFF00 || mk === 0xFFDA) break;
+      p += 2 + len;
+    }
+  }catch(e){}
+  return null;
 }
 
 // ===== 画像縮小 =====
@@ -314,6 +354,18 @@ async function renderBridge(no){
   nx.onclick = ()=> location.hash = '#b/' + list[idx+1].no;
   app.append(bar);
 
+  // 踏査開始（元写真を橋ごとに仕分けるための時刻記録）
+  const lg = loadLog(), mine = lg.filter(x=>x.no===no), last = lg[lg.length-1];
+  const active = last && last.no===no;
+  const sb = $(`<div class="startbar">
+    <button class="startbtn ${active?'on':''}">${active?'✓ この橋を踏査中':'▶ この橋の踏査を開始'}</button>
+    <div class="startinfo">${mine.length ? '開始記録：' + mine.map(x=>hm(x.t)).join('、') : '橋に着いたらタップ（元写真の自動仕分けに使います）'}</div></div>`);
+  sb.querySelector('.startbtn').onclick = ()=>{
+    if(active && !confirm('すでにこの橋を踏査中です。開始時刻をもう一度記録しますか？')) return;
+    addStart(no); toast(`No.${no} 踏査開始 ${hm(Date.now())}`); renderBridge(no);
+  };
+  app.append(sb);
+
   const wrap = $('<div class="slots"></div>');
   for(const s of SLOTS){
     const rec = await getPhoto(keyOf(no,s.k));
@@ -356,7 +408,7 @@ async function renderBridge(no){
     const [bm,br,bd] = el.querySelectorAll('.tbtn');
     bm.onclick = async ()=>{
       const v = prompt('この写真のメモ（例：支承、伸縮装置、添架物）', rec.memo||''); if(v===null) return;
-      await putRec(rec.key, {blob:rec.blob, ts:rec.ts, memo:v.trim()}); renderBridge(no);
+      await putRec(rec.key, {blob:rec.blob, ts:rec.ts, shot:rec.shot, memo:v.trim()}); renderBridge(no);
     };
     br.onclick = ()=> pick(no, {k:EXTRA, n:'その他'+(i+1)}, rec);
     bd.onclick = async ()=>{
@@ -377,12 +429,13 @@ picker.addEventListener('change', async ()=>{
   const {no,slot,rec} = pickTarget; pickTarget = null;
   const busy = $('<div class="busy">保存中…</div>'); document.body.append(busy); busy.style.position='fixed';
   try{
+    const shot = (await exifTime(f)) || Date.now();   // 撮影時刻（EXIFがなければ今）
     const blob = await resize(f);
     if(slot.k===EXTRA){
       const ts = rec ? rec.ts : Date.now(), key = rec ? rec.key : `${no}|${EXTRA}|${ts}`;
-      await putRec(key, {blob, ts, memo: rec ? (rec.memo||'') : ''});
+      await putRec(key, {blob, ts, shot, memo: rec ? (rec.memo||'') : ''});
     }else{
-      await putPhoto(keyOf(no,slot.k), blob);
+      await putRec(keyOf(no,slot.k), {blob, ts:Date.now(), shot});
     }
     toast(`No.${no}「${slot.n}」を保存しました`);
   }catch(e){ alert('保存できませんでした：' + (e && e.message || e)); }
@@ -409,6 +462,13 @@ async function exportZip(){
   }
   const csv = '\ufeff' + rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
   files.push({name:'photo_list.csv', data:new TextEncoder().encode(csv)});
+  // 元写真の仕分け用ログ：踏査開始の時刻と、枠に入れた写真の撮影時刻
+  const ev = loadLog().map(x=>({no:x.no, kind:'開始', t:x.t, part:''}));
+  for(const r of recs){ if(r.rec.shot) ev.push({no:r.no, kind:'写真', t:r.rec.shot, part: r.k===EXTRA ? 'その他' : SLOTS[order(r.k)].n}); }
+  ev.sort((a,b)=>a.t-b.t);
+  const lrows = [['No','橋梁名','種別','日時','部位'], ...ev.map(e=>[e.no, names.get(e.no)||'', e.kind, fmtDT(e.t), e.part])];
+  const lcsv = '\ufeff' + lrows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  files.push({name:'bridge_log.csv', data:new TextEncoder().encode(lcsv)});
   const d = new Date(), stamp = d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')
             +'_'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');
   const safe = curProj().name.replace(/[\\/:*?"<>|\s]+/g,'_').slice(0,40) || 'gyomu';
@@ -422,7 +482,7 @@ async function exportZip(){
       document.body.append(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},4000);
     }
     localStorage.setItem(LS_EXPORT, String(Date.now()));
-    toast(`${files.length-1}枚をZIPにしました`);
+    toast(`${files.length-2}枚をZIPにしました`);
     if(!location.hash) renderList();
   }catch(e){ if(e && e.name!=='AbortError') alert('ZIP保存に失敗しました：' + e.message); }
 }
@@ -451,7 +511,7 @@ document.getElementById('btnSaveList').onclick = ()=>{
 document.getElementById('btnClearAll').onclick = async ()=>{
   const last = localStorage.getItem(LS_EXPORT);
   if(!confirm(`業務「${curProj().name}」の写真をすべて削除します。` + (last?'':'\n※この業務はまだ一度もZIP保存していません。') + '\nよろしいですか？')) return;
-  await clearAll(); localStorage.removeItem(LS_EXPORT); dlg.close(); location.hash=''; route(); toast('削除しました');
+  await clearAll(); localStorage.removeItem(LS_EXPORT); localStorage.removeItem(LS_LOG); dlg.close(); location.hash=''; route(); toast('削除しました');
 };
 document.getElementById('btnExport').onclick = exportZip;
 
@@ -463,7 +523,7 @@ function projects(){
 function saveProjects(p){ localStorage.setItem(LS_PROJ, JSON.stringify(p)); }
 function curProj(){ return projects().find(p=>p.id===PID) || {id:PID, name:'業務'}; }
 function setProject(id){
-  PID = id; LS_LIST = 'tousa.list.' + id; LS_EXPORT = 'tousa.lastExport.' + id;
+  PID = id; LS_LIST = 'tousa.list.' + id; LS_EXPORT = 'tousa.lastExport.' + id; LS_LOG = 'tousa.log.' + id;
   localStorage.setItem(LS_CUR, id);
 }
 const newId = ()=> 'p' + Date.now().toString(36);
@@ -521,7 +581,7 @@ document.getElementById('btnProjRename').onclick = ()=>{
 document.getElementById('btnProjDel').onclick = async ()=>{
   const c = curProj(), n = (await allKeys()).length, last = localStorage.getItem(LS_EXPORT);
   if(!confirm(`業務「${c.name}」を削除します（写真 ${n} 枚と橋梁リストも消えます）。` + (n && !last ? '\n※この業務はまだ一度もZIP保存していません。' : '') + '\nよろしいですか？')) return;
-  await clearAll(); localStorage.removeItem(LS_LIST); localStorage.removeItem(LS_EXPORT);
+  await clearAll(); localStorage.removeItem(LS_LIST); localStorage.removeItem(LS_EXPORT); localStorage.removeItem(LS_LOG);
   let p = projects().filter(x=>x.id!==PID);
   if(!p.length) p = [{id:newId(), name:'業務1'}];
   saveProjects(p); setProject(p[0].id); dlgP.close(); location.hash=''; route(); toast('業務を削除しました');
