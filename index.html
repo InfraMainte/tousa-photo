@@ -88,7 +88,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 .pitem.cur .mk{border:7px solid var(--head)}
 .startbar{display:flex;align-items:center;gap:12px;margin:-4px 0 14px;flex-wrap:wrap}
 .startbtn{border:0;border-radius:12px;padding:13px 18px;font-size:17px;font-weight:700;background:var(--ok);color:#fff}
-.startbtn.on{background:#e7f3ec;color:var(--ok);border:2px solid var(--ok)}
+.startbtn.on{background:#c0392b;color:#fff}
 .startinfo{color:var(--sub);font-size:14px;line-height:1.5}
 @media (max-width:560px){.slots{grid-template-columns:1fr}}
 </style>
@@ -223,6 +223,19 @@ function parseList(text){
 // ===== 踏査開始の記録（元写真の仕分け用） =====
 function loadLog(){ try{ const v = JSON.parse(localStorage.getItem(LS_LOG)||'[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; } }
 function addStart(no){ const l = loadLog(); l.push({no, t:Date.now()}); localStorage.setItem(LS_LOG, JSON.stringify(l)); }
+function addEnd(no){ const l = loadLog(); l.push({no, t:Date.now(), end:true}); localStorage.setItem(LS_LOG, JSON.stringify(l)); }
+// 踏査中の橋（最後の記録が「開始」ならその橋、なければ null）
+function activeNo(){ const l = loadLog(), x = l[l.length-1]; return x && !x.end ? x.no : null; }
+// その橋の踏査時間帯の表示（例：10:05〜10:40、11:30〜踏査中）
+function spans(no){
+  const l = loadLog(), out = []; let cur = null;
+  for(const x of l){
+    if(!x.end && x.no===no){ if(cur) out.push(hm(cur)+'〜'); cur = x.t; }
+    else if(cur){ out.push(hm(cur)+'〜'+hm(x.t)); cur = null; }   // 終了、または別の橋の開始で区切る
+  }
+  if(cur) out.push(hm(cur)+'〜踏査中');
+  return out;
+}
 const hm = (t)=>{ const d=new Date(t); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
 function fmtDT(t){
   const d=new Date(t), z=(n)=>String(n).padStart(2,'0');
@@ -317,7 +330,7 @@ async function renderList(){
   freeUrls();
   document.getElementById('htitle').textContent = '踏査写真';
   document.getElementById('projName').textContent = curProj().name;
-  const list = loadList(), {m:st, total} = await stats(), last = localStorage.getItem(LS_EXPORT);
+  const list = loadList(), {m:st, total} = await stats(), last = localStorage.getItem(LS_EXPORT), act = activeNo();
   app.innerHTML = '';
   app.append($(`<p class="summary">写真 ${total} 枚 ／ 最終ZIP保存：${last?new Date(+last).toLocaleString('ja-JP'):'未保存'}</p>`));
   const g = $('<div class="grid"></div>');
@@ -326,7 +339,7 @@ async function renderList(){
     const dots = SLOTS.map(s=>`<span class="dot ${x.set.has(s.k)?'on':''}"></span>`).join('');
     const el = $(`<button class="card ${x.set.size>=SLOTS.length?'done':''}"><span class="no">No.${b.no}</span>
       <span class="nm">${esc(b.name||'（橋梁名未設定）')}</span>
-      <span class="dots">${dots}${x.ex?`<span class="ex">その他${x.ex}</span>`:''}</span></button>`);
+      <span class="dots">${dots}${x.ex?`<span class="ex">その他${x.ex}</span>`:''}${b.no===act?'<span class="ex" style="color:var(--ok);font-weight:700">踏査中</span>':''}</span></button>`);
     el.onclick = ()=> location.hash = '#b/' + b.no;
     g.append(el);
   }
@@ -355,14 +368,16 @@ async function renderBridge(no){
   app.append(bar);
 
   // 踏査開始（元写真を橋ごとに仕分けるための時刻記録）
-  const lg = loadLog(), mine = lg.filter(x=>x.no===no), last = lg[lg.length-1];
-  const active = last && last.no===no;
+  const act = activeNo(), active = act===no, sp = spans(no);
+  let info = sp.length ? '踏査時間：' + sp.join('、') : '橋に着いたら「開始」、離れるときに「終了」（元写真の自動仕分けに使います）';
+  if(act!==null && !active) info += `<br><b>いま No.${act} を踏査中</b>（ここで開始すると No.${act} は自動で終了）`;
   const sb = $(`<div class="startbar">
-    <button class="startbtn ${active?'on':''}">${active?'✓ この橋を踏査中':'▶ この橋の踏査を開始'}</button>
-    <div class="startinfo">${mine.length ? '開始記録：' + mine.map(x=>hm(x.t)).join('、') : '橋に着いたらタップ（元写真の自動仕分けに使います）'}</div></div>`);
+    <button class="startbtn ${active?'on':''}">${active?'■ この橋の踏査を終了':'▶ この橋の踏査を開始'}</button>
+    <div class="startinfo">${info}</div></div>`);
   sb.querySelector('.startbtn').onclick = ()=>{
-    if(active && !confirm('すでにこの橋を踏査中です。開始時刻をもう一度記録しますか？')) return;
-    addStart(no); toast(`No.${no} 踏査開始 ${hm(Date.now())}`); renderBridge(no);
+    if(active){ addEnd(no); toast(`No.${no} 踏査終了 ${hm(Date.now())}`); }
+    else      { addStart(no); toast(`No.${no} 踏査開始 ${hm(Date.now())}`); }
+    renderBridge(no);
   };
   app.append(sb);
 
@@ -463,7 +478,7 @@ async function exportZip(){
   const csv = '\ufeff' + rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
   files.push({name:'photo_list.csv', data:new TextEncoder().encode(csv)});
   // 元写真の仕分け用ログ：踏査開始の時刻と、枠に入れた写真の撮影時刻
-  const ev = loadLog().map(x=>({no:x.no, kind:'開始', t:x.t, part:''}));
+  const ev = loadLog().map(x=>({no:x.no, kind: x.end ? '終了' : '開始', t:x.t, part:''}));
   for(const r of recs){ if(r.rec.shot) ev.push({no:r.no, kind:'写真', t:r.rec.shot, part: r.k===EXTRA ? 'その他' : SLOTS[order(r.k)].n}); }
   ev.sort((a,b)=>a.t-b.t);
   const lrows = [['No','橋梁名','種別','日時','部位'], ...ev.map(e=>[e.no, names.get(e.no)||'', e.kind, fmtDT(e.t), e.part])];
