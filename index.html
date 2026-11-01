@@ -90,6 +90,25 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 .startbtn{border:0;border-radius:12px;padding:13px 18px;font-size:17px;font-weight:700;background:var(--ok);color:#fff}
 .startbtn.on{background:#c0392b;color:#fff}
 .startinfo{color:var(--sub);font-size:14px;line-height:1.5}
+.slot svg.ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+.tbtn.arw{color:#c0392b}
+#arrowEd{position:fixed;inset:0;z-index:50;background:#111;display:none;flex-direction:column;
+  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+#arrowEd.show{display:flex}
+#arrowEd .top,#arrowEd .bot{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#1f2a37;color:#fff;flex-wrap:wrap}
+#arrowEd .top .ttl{flex:1;font-weight:700;font-size:17px}
+#arrowEd .stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
+#arrowEd .stage img,#arrowEd .stage svg{position:absolute;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#arrowEd .stage svg{touch-action:none}
+.eb{border:0;border-radius:10px;padding:11px 14px;font-size:16px;font-weight:700;background:#334355;color:#fff}
+.eb.pri{background:var(--accent);color:#1b1b1b}
+.eb.red{background:#c0392b}
+.eb:disabled{opacity:.35}
+.sw{width:34px;height:34px;border-radius:50%;border:3px solid #fff;padding:0}
+.sw.on{outline:3px solid var(--accent);outline-offset:2px}
+.wlab{font-size:14px;color:#cdd5dd}
+#arrowEd input[type=range]{width:160px;height:30px}
+.hint{font-size:13px;color:#cdd5dd;width:100%}
 @media (max-width:560px){.slots{grid-template-columns:1fr}}
 </style>
 </head>
@@ -134,6 +153,23 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     <button class="btn primary" id="btnProjClose">閉じる</button>
   </div>
 </div></dialog>
+
+<div id="arrowEd">
+  <div class="top">
+    <span class="ttl" id="aeTitle">矢印</span>
+    <button class="eb" id="aeCancel">キャンセル</button>
+    <button class="eb pri" id="aeDone">完了</button>
+  </div>
+  <div class="stage" id="aeStage"><img id="aeImg" alt=""><svg id="aeSvg"></svg></div>
+  <div class="bot">
+    <button class="eb" id="aeAdd">＋ 矢印</button>
+    <button class="eb" id="aeFlip">向きを反転</button>
+    <button class="eb red" id="aeDel">削除</button>
+    <span class="wlab">太さ</span><input type="range" id="aeW" min="3" max="40" step="1" value="10">
+    <span id="aeSw"></span>
+    <div class="hint">写真の上をなぞると矢印を追加。矢印をタップで選択 → 両端の○で向き・長さ、中央をドラッグで移動。</div>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -388,9 +424,12 @@ async function renderBridge(no){
     if(rec){
       const u = URL.createObjectURL(rec.blob); urls.push(u);
       el.append($(`<img alt="${s.n}" src="${u}">`));
-      const tools = $('<div class="tools"><button class="tbtn">差し替え</button><button class="tbtn del">削除</button></div>');
-      tools.children[0].onclick = ()=> pick(no,s);
-      tools.children[1].onclick = async ()=>{
+      addOverlay(el, el.querySelector('img'), rec.arrows);
+      const na = (rec.arrows||[]).length;
+      const tools = $(`<div class="tools"><button class="tbtn arw">➜ 矢印${na?'('+na+')':''}</button><button class="tbtn">差し替え</button><button class="tbtn del">削除</button></div>`);
+      tools.children[0].onclick = ()=> openArrowEditor(keyOf(no,s.k), `No.${no} ${s.n}`, ()=> renderBridge(no));
+      tools.children[1].onclick = ()=> pick(no,s);
+      tools.children[2].onclick = async ()=>{
         if(!confirm(`No.${no} の「${s.n}」写真を削除しますか？`)) return;
         await delPhoto(keyOf(no,s.k)); renderBridge(no);
       };
@@ -419,11 +458,14 @@ async function renderBridge(no){
     const u = URL.createObjectURL(rec.blob); urls.push(u);
     const el = $(`<div class="slot has"><span class="lbl">その他${i+1}</span><img alt="その他" src="${u}">
       <div class="memo">${esc(rec.memo||'')}</div>
-      <div class="tools"><button class="tbtn">メモ</button><button class="tbtn">差し替え</button><button class="tbtn del">削除</button></div></div>`);
-    const [bm,br,bd] = el.querySelectorAll('.tbtn');
+      <div class="tools"><button class="tbtn arw">➜ 矢印${(rec.arrows||[]).length?'('+rec.arrows.length+')':''}</button><button class="tbtn">メモ</button><button class="tbtn">差し替え</button><button class="tbtn del">削除</button></div></div>`);
+    addOverlay(el, el.querySelector('img'), rec.arrows);
+    const [ba,bm,br,bd] = el.querySelectorAll('.tbtn');
+    ba.onclick = ()=> openArrowEditor(rec.key, `No.${no} その他${i+1}`, ()=> renderBridge(no));
     bm.onclick = async ()=>{
       const v = prompt('この写真のメモ（例：支承、伸縮装置、添架物）', rec.memo||''); if(v===null) return;
-      await putRec(rec.key, {blob:rec.blob, ts:rec.ts, shot:rec.shot, memo:v.trim()}); renderBridge(no);
+      const {key, ...val} = rec; val.memo = v.trim();
+      await putRec(rec.key, val); renderBridge(no);
     };
     br.onclick = ()=> pick(no, {k:EXTRA, n:'その他'+(i+1)}, rec);
     bd.onclick = async ()=>{
@@ -458,6 +500,156 @@ picker.addEventListener('change', async ()=>{
   renderBridge(no);
 });
 
+// ===== 矢印（流水方向など） =====
+// 矢印は写真とは別に {x1,y1,x2,y2,w,c} で保存（x,y＝写真幅・高さに対する0〜1、w＝写真の幅に対する太さ）
+const ACOLORS = ['#e0412f','#f2c200','#ffffff','#1e88e5'];
+// 矢印の外形（7点の多角形）。単位は写真のピクセル
+function arrowPts(x1,y1,x2,y2,w){
+  const dx=x2-x1, dy=y2-y1, L=Math.hypot(dx,dy)||1, ux=dx/L, uy=dy/L, px=-uy, py=ux;
+  const hl=Math.min(w*3.2, L*0.6), hw=w*1.6, sx=x2-ux*hl, sy=y2-uy*hl, h=w/2;
+  return [[x1+px*h,y1+py*h],[sx+px*h,sy+py*h],[sx+px*hw,sy+py*hw],[x2,y2],[sx-px*hw,sy-py*hw],[sx-px*h,sy-py*h],[x1-px*h,y1-py*h]];
+}
+function arrowSvg(a, iw, ih, extra){
+  const pts = arrowPts(a.x1*iw,a.y1*ih,a.x2*iw,a.y2*ih,a.w*iw).map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+  const sw = Math.max(1, a.w*iw*0.12);
+  const edge = a.c==='#ffffff' ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.85)';
+  return `<polygon points="${pts}" fill="${a.c}" stroke="${edge}" stroke-width="${sw.toFixed(1)}" stroke-linejoin="round" ${extra||''}/>`;
+}
+// 枠のサムネイルに矢印を重ねる
+function addOverlay(el, img, arrows){
+  if(!arrows || !arrows.length) return;
+  const put = ()=>{
+    const iw=img.naturalWidth, ih=img.naturalHeight; if(!iw) return;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('class','ov'); svg.setAttribute('viewBox',`0 0 ${iw} ${ih}`); svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+    svg.innerHTML = arrows.map(a=>arrowSvg(a,iw,ih)).join('');
+    img.after(svg);
+  };
+  (img.complete && img.naturalWidth) ? put() : img.addEventListener('load', put, {once:true});
+}
+// ZIP保存時に矢印を写真へ焼き込む
+async function burnArrows(blob, arrows){
+  const bmp = await createImageBitmap(blob), iw=bmp.width, ih=bmp.height;
+  const c = document.createElement('canvas'); c.width=iw; c.height=ih;
+  const g = c.getContext('2d'); g.drawImage(bmp,0,0);
+  for(const a of arrows){
+    const pts = arrowPts(a.x1*iw,a.y1*ih,a.x2*iw,a.y2*ih,a.w*iw);
+    g.beginPath(); pts.forEach((p,i)=> i ? g.lineTo(p[0],p[1]) : g.moveTo(p[0],p[1])); g.closePath();
+    g.lineJoin='round'; g.lineWidth=Math.max(1,a.w*iw*0.12);
+    g.strokeStyle = a.c==='#ffffff' ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.85)'; g.stroke();
+    g.fillStyle=a.c; g.fill();
+  }
+  return await new Promise((res,rej)=> c.toBlob(b=> b?res(b):rej(new Error('変換失敗')),'image/jpeg',0.9));
+}
+
+// ---- 矢印エディタ ----
+const AE = { key:null, rec:null, arrows:[], sel:-1, iw:0, ih:0, scale:1, drag:null, color:ACOLORS[0], w:0.012, onDone:null };
+const aeEl = document.getElementById('arrowEd'), aeImg = document.getElementById('aeImg'),
+      aeSvg = document.getElementById('aeSvg'), aeStage = document.getElementById('aeStage'), aeW = document.getElementById('aeW');
+let aeUrl = null;
+
+async function openArrowEditor(key, title, onDone){
+  const rec = await getPhoto(key); if(!rec) return;
+  AE.key=key; AE.rec=rec; AE.onDone=onDone; AE.sel=-1; AE.drag=null;
+  AE.arrows = (rec.arrows||[]).map(a=>({...a}));
+  document.getElementById('aeTitle').textContent = title + ' の矢印';
+  if(aeUrl) URL.revokeObjectURL(aeUrl);
+  aeUrl = URL.createObjectURL(rec.blob); aeImg.src = aeUrl; await aeImg.decode();
+  AE.iw=aeImg.naturalWidth; AE.ih=aeImg.naturalHeight;
+  aeEl.classList.add('show'); document.body.style.overflow='hidden';
+  aeLayout(); aeSwatches(); aeSync();
+}
+function aeLayout(){
+  if(!aeEl.classList.contains('show')) return;
+  const r = aeStage.getBoundingClientRect(), m = 8;
+  AE.scale = Math.min((r.width-m*2)/AE.iw, (r.height-m*2)/AE.ih);
+  const w = AE.iw*AE.scale, h = AE.ih*AE.scale;
+  for(const e of [aeImg, aeSvg]){ e.style.width=w+'px'; e.style.height=h+'px'; e.style.left=(r.width-w)/2+'px'; e.style.top=(r.height-h)/2+'px'; }
+  aeSvg.setAttribute('viewBox',`0 0 ${AE.iw} ${AE.ih}`);
+  aeDraw();
+}
+addEventListener('resize', aeLayout);
+function aeSwatches(){
+  const box = document.getElementById('aeSw'); box.innerHTML='';
+  for(const c of ACOLORS){
+    const b = document.createElement('button'); b.className='sw'+(c===aeCur().c?' on':''); b.style.background=c; b.setAttribute('aria-label','色');
+    b.onclick = ()=>{ AE.color=c; if(AE.sel>=0) AE.arrows[AE.sel].c=c; aeSwatches(); aeDraw(); };
+    box.append(b);
+  }
+}
+function aeCur(){ return AE.sel>=0 ? AE.arrows[AE.sel] : {c:AE.color, w:AE.w}; }
+function aeSync(){
+  const has = AE.sel>=0;
+  document.getElementById('aeDel').disabled = !has; document.getElementById('aeFlip').disabled = !has;
+  aeW.value = Math.round(aeCur().w*1000); aeSwatches(); aeDraw();
+}
+function aeDraw(){
+  const iw=AE.iw, ih=AE.ih, hr = 16/AE.scale;   // つまみの半径（画面で16px）
+  let html = AE.arrows.map((a,i)=> arrowSvg(a,iw,ih)).join('');
+  if(AE.sel>=0){
+    const a = AE.arrows[AE.sel];
+    html += `<line x1="${a.x1*iw}" y1="${a.y1*ih}" x2="${a.x2*iw}" y2="${a.y2*ih}" stroke="#f2b705" stroke-width="${2/AE.scale}" stroke-dasharray="${6/AE.scale}"/>`;
+    for(const [x,y] of [[a.x1,a.y1],[a.x2,a.y2]])
+      html += `<circle cx="${x*iw}" cy="${y*ih}" r="${hr}" fill="rgba(242,183,5,.35)" stroke="#f2b705" stroke-width="${3/AE.scale}"/>`;
+  }
+  aeSvg.innerHTML = html;
+}
+function aePt(e){ const r = aeSvg.getBoundingClientRect(); return [(e.clientX-r.left)/r.width, (e.clientY-r.top)/r.height]; }
+function aeHit(p){
+  const iw=AE.iw, ih=AE.ih, x=p[0]*iw, y=p[1]*ih, tol = 26/AE.scale;
+  if(AE.sel>=0){
+    const a = AE.arrows[AE.sel];
+    if(Math.hypot(x-a.x2*iw, y-a.y2*ih) < tol) return {i:AE.sel, part:'end'};
+    if(Math.hypot(x-a.x1*iw, y-a.y1*ih) < tol) return {i:AE.sel, part:'start'};
+  }
+  for(let i=AE.arrows.length-1;i>=0;i--){
+    const a = AE.arrows[i], ax=a.x1*iw, ay=a.y1*ih, bx=a.x2*iw, by=a.y2*ih;
+    const L2=(bx-ax)**2+(by-ay)**2 || 1, t=Math.max(0,Math.min(1,((x-ax)*(bx-ax)+(y-ay)*(by-ay))/L2));
+    if(Math.hypot(x-(ax+t*(bx-ax)), y-(ay+t*(by-ay))) < Math.max(tol, a.w*iw*1.6)) return {i, part:'body'};
+  }
+  return null;
+}
+aeSvg.addEventListener('pointerdown', e=>{
+  e.preventDefault(); aeSvg.setPointerCapture(e.pointerId);
+  const p = aePt(e), h = aeHit(p);
+  if(h){ AE.sel=h.i; AE.drag={part:h.part, p0:p, a0:{...AE.arrows[h.i]}}; }
+  else { AE.arrows.push({x1:p[0],y1:p[1],x2:p[0],y2:p[1],w:AE.w,c:AE.color}); AE.sel=AE.arrows.length-1; AE.drag={part:'new', p0:p}; }
+  aeSync();
+});
+aeSvg.addEventListener('pointermove', e=>{
+  if(!AE.drag) return; e.preventDefault();
+  const p = aePt(e), a = AE.arrows[AE.sel], d = AE.drag, cl = v=>Math.max(0,Math.min(1,v));
+  if(d.part==='end' || d.part==='new'){ a.x2=cl(p[0]); a.y2=cl(p[1]); }
+  else if(d.part==='start'){ a.x1=cl(p[0]); a.y1=cl(p[1]); }
+  else { const dx=p[0]-d.p0[0], dy=p[1]-d.p0[1]; a.x1=d.a0.x1+dx; a.y1=d.a0.y1+dy; a.x2=d.a0.x2+dx; a.y2=d.a0.y2+dy; }
+  aeDraw();
+});
+const aeUp = ()=>{
+  if(!AE.drag) return;
+  if(AE.drag.part==='new'){   // 短すぎる「なぞり」はタップとみなして取り消す
+    const a = AE.arrows[AE.sel];
+    if(Math.hypot((a.x2-a.x1)*AE.iw,(a.y2-a.y1)*AE.ih)*AE.scale < 25){ AE.arrows.pop(); AE.sel=-1; }
+  }
+  AE.drag=null; aeSync();
+};
+aeSvg.addEventListener('pointerup', aeUp); aeSvg.addEventListener('pointercancel', aeUp);
+aeW.addEventListener('input', ()=>{ const w = aeW.value/1000; AE.w=w; if(AE.sel>=0) AE.arrows[AE.sel].w=w; aeDraw(); });
+document.getElementById('aeAdd').onclick = ()=>{
+  AE.arrows.push({x1:0.3,y1:0.6,x2:0.7,y2:0.6,w:AE.w,c:AE.color}); AE.sel=AE.arrows.length-1; aeSync();
+};
+document.getElementById('aeFlip').onclick = ()=>{
+  const a = AE.arrows[AE.sel]; if(!a) return; [a.x1,a.x2,a.y1,a.y2]=[a.x2,a.x1,a.y2,a.y1]; aeDraw();
+};
+document.getElementById('aeDel').onclick = ()=>{ if(AE.sel<0) return; AE.arrows.splice(AE.sel,1); AE.sel=-1; aeSync(); };
+function aeClose(){ aeEl.classList.remove('show'); document.body.style.overflow=''; }
+document.getElementById('aeCancel').onclick = aeClose;
+document.getElementById('aeDone').onclick = async ()=>{
+  const {key, ...val} = AE.rec; val.arrows = AE.arrows;
+  try{ await putRec(AE.key, val); toast(`矢印 ${AE.arrows.length} 本を保存しました`); }
+  catch(e){ alert('保存できませんでした：' + e.message); return; }
+  aeClose(); AE.onDone && AE.onDone();
+};
+
 // ===== ZIP保存 =====
 async function exportZip(){
   const keys = (await allKeys()).map(String);
@@ -472,7 +664,8 @@ async function exportZip(){
     const p = String(r.no).padStart(2,'0'); let fname, label;
     if(r.k===EXTRA){ const n=(exN.get(r.no)||0)+1; exN.set(r.no,n); fname=`${p}_sonota_${String(n).padStart(2,'0')}.jpg`; label='その他'+n; }
     else { fname=`${p}_${r.k}.jpg`; label=SLOTS[order(r.k)].n; }
-    files.push({name:fname, data:new Uint8Array(await r.rec.blob.arrayBuffer())});
+    const outBlob = (r.rec.arrows && r.rec.arrows.length) ? await burnArrows(r.rec.blob, r.rec.arrows) : r.rec.blob;
+    files.push({name:fname, data:new Uint8Array(await outBlob.arrayBuffer())});
     rows.push([r.no, names.get(r.no)||'', label, fname, r.rec.memo||'']);
   }
   const csv = '\ufeff' + rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
