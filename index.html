@@ -50,6 +50,7 @@ main{padding:16px;max-width:1100px;margin:0 auto}
   font-size:16px;padding:5px 11px;border-radius:8px;z-index:2}
 .slot .empty{font-size:17px;color:var(--sub);text-align:center;line-height:1.7;pointer-events:none}
 .slot .empty b{display:block;font-size:40px;color:#8a96a3;line-height:1}
+.slot .broken{color:#fff;font-size:15px;text-align:center;line-height:1.7;padding:0 16px}
 .slot .tools{position:absolute;right:8px;bottom:8px;display:flex;gap:8px;z-index:2}
 .tbtn{border:0;border-radius:10px;padding:11px 15px;font-size:15px;font-weight:600;background:rgba(255,255,255,.92);color:var(--ink)}
 .tbtn.del{color:var(--warn)}
@@ -212,7 +213,7 @@ async function tx(mode, fn){
 }
 // 写真のキーは「業務ID|No|部位」。画面側では業務IDを除いた「No|部位」で扱う
 const fk = (k)=> PID + '|' + k;
-const range = (pid)=> IDBKeyRange.bound(pid + '|', pid + '|\uffff');
+const range = (pid)=> IDBKeyRange.bound(pid + '|', pid + '|￿');
 const putPhoto = (key,blob)=> tx('readwrite', s=> s.put({blob, ts:Date.now()}, fk(key)));
 const putRec   = (key,val)=> tx('readwrite', s=> s.put(val, fk(key)));
 const delPhoto = (key)=> tx('readwrite', s=> s.delete(fk(key)));
@@ -222,6 +223,15 @@ const clearAll = ()=> tx('readwrite', s=> s.delete(range(PID)));
 const keyOf = (no,k)=> no + '|' + k;
 const EXTRA = 'sonota';
 const getAll = ()=> tx('readonly', s=> s.getAll());
+// iPad（Safari）対策：IndexedDBから読んだ写真をそのまま同じキーへ書き戻すと、
+// 上書きの際に写真の実体が消えて「？」表示になることがある。書き戻す前に必ずメモリ上へ複製する
+async function freshBlob(b){ return new Blob([await b.arrayBuffer()], {type: b.type || 'image/jpeg'}); }
+async function rewriteRec(key, rec, changes){
+  const {key:_k, ...val} = rec;
+  Object.assign(val, changes);
+  val.blob = await freshBlob(rec.blob);
+  await putRec(key, val);
+}
 
 // ===== 橋梁リスト =====
 function loadList(){
@@ -346,11 +356,27 @@ function makeZip(files){
 
 // ===== 画面 =====
 const app = document.getElementById('app'), picker = document.getElementById('picker');
-let urls = [], pickTarget = null;
+let urls = [], pickTarget = null, renderSeq = 0;
 const $ = (h)=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstElementChild;};
 const esc = (s)=> String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2200);}
 function freeUrls(){urls.forEach(u=>URL.revokeObjectURL(u));urls=[];}
+// 写真が読めなかったときは、少し待って読み直す（最大3回）。それでも駄目なら案内を出す
+function retryImg(img, key){
+  let n = 0;
+  img.addEventListener('error', async ()=>{
+    if(n >= 3){
+      img.replaceWith($('<div class="broken">写真を表示できません。<br>「差し替え」で入れ直してください</div>'));
+      return;
+    }
+    n++;
+    await new Promise(r=> setTimeout(r, 500*n));
+    if(!img.isConnected) return;
+    const rec = await getPhoto(key).catch(()=> null);
+    if(!rec || !img.isConnected) return;
+    const u = URL.createObjectURL(rec.blob); urls.push(u); img.src = u;
+  });
+}
 
 async function stats(){
   const m = new Map(), keys = await allKeys();
@@ -363,10 +389,12 @@ async function stats(){
 }
 
 async function renderList(){
+  const seq = ++renderSeq;
   freeUrls();
   document.getElementById('htitle').textContent = '踏査写真';
   document.getElementById('projName').textContent = curProj().name;
   const list = loadList(), {m:st, total} = await stats(), last = localStorage.getItem(LS_EXPORT), act = activeNo();
+  if(seq!==renderSeq) return;
   app.innerHTML = '';
   app.append($(`<p class="summary">写真 ${total} 枚 ／ 最終ZIP保存：${last?new Date(+last).toLocaleString('ja-JP'):'未保存'}</p>`));
   const g = $('<div class="grid"></div>');
@@ -386,10 +414,25 @@ async function renderList(){
 }
 
 async function renderBridge(no){
+  // 描き直しが重なったときは、後から始めた方だけを画面に出す（古い方は途中でやめる）
+  const seq = ++renderSeq, stale = ()=> seq!==renderSeq;
   freeUrls();
   const list = loadList(), idx = list.findIndex(b=>b.no===no), b = list[idx] || {no, name:''};
   document.getElementById('htitle').textContent = 'No.' + no + (b.name?'　'+b.name:'');
   document.getElementById('projName').textContent = curProj().name;
+
+  // 先に写真をすべて読んでから、画面を一度に組み立てる
+  const recs = [];
+  for(const s of SLOTS){ recs.push(await getPhoto(keyOf(no,s.k))); if(stale()) return; }
+  const d = await db();
+  const extras = await new Promise((res,rej)=>{
+    const out=[], r = d.transaction('photos').objectStore('photos')
+      .openCursor(IDBKeyRange.bound(fk(no+'|'+EXTRA+'|'), fk(no+'|'+EXTRA+'|￿')));
+    r.onsuccess = ()=>{ const c=r.result; if(c){ out.push({key:String(c.key).slice(PID.length+1), ...c.value}); c.continue(); } else res(out); };
+    r.onerror = ()=> rej(r.error);
+  });
+  if(stale()) return;
+
   app.innerHTML = '';
   const bar = $(`<div class="bar">
     <button class="nav" id="bk">← 一覧</button>
@@ -418,13 +461,14 @@ async function renderBridge(no){
   app.append(sb);
 
   const wrap = $('<div class="slots"></div>');
-  for(const s of SLOTS){
-    const rec = await getPhoto(keyOf(no,s.k));
+  SLOTS.forEach((s,si)=>{
+    const rec = recs[si];
     const el = $(`<div class="slot ${s.wide?'wide':''} ${rec?'has':''}"><span class="lbl">${s.n}</span></div>`);
     if(rec){
       const u = URL.createObjectURL(rec.blob); urls.push(u);
-      el.append($(`<img alt="${s.n}" src="${u}">`));
-      addOverlay(el, el.querySelector('img'), rec.arrows);
+      const img = $(`<img alt="" src="${u}">`);
+      el.append(img); retryImg(img, keyOf(no,s.k));
+      addOverlay(el, img, rec.arrows);
       const na = (rec.arrows||[]).length;
       const tools = $(`<div class="tools"><button class="tbtn arw">➜ 矢印${na?'('+na+')':''}</button><button class="tbtn">差し替え</button><button class="tbtn del">削除</button></div>`);
       tools.children[0].onclick = ()=> openArrowEditor(keyOf(no,s.k), `No.${no} ${s.n}`, ()=> renderBridge(no));
@@ -441,31 +485,27 @@ async function renderBridge(no){
       el.append(hit);
     }
     wrap.append(el);
-  }
+  });
   app.append(wrap);
 
   // その他（枚数自由・Excelには貼らない参考写真）
   app.append($('<div class="sec">その他<small>何枚でも追加可。Excelの枠には貼られず、ZIPに参考写真として入ります</small></div>'));
   const ex = $('<div class="slots"></div>');
-  const d = await db();
-  const extras = await new Promise((res,rej)=>{
-    const out=[], r = d.transaction('photos').objectStore('photos')
-      .openCursor(IDBKeyRange.bound(fk(no+'|'+EXTRA+'|'), fk(no+'|'+EXTRA+'|\uffff')));
-    r.onsuccess = ()=>{ const c=r.result; if(c){ out.push({key:String(c.key).slice(PID.length+1), ...c.value}); c.continue(); } else res(out); };
-    r.onerror = ()=> rej(r.error);
-  });
   extras.sort((a,b)=>a.ts-b.ts).forEach((rec,i)=>{
     const u = URL.createObjectURL(rec.blob); urls.push(u);
-    const el = $(`<div class="slot has"><span class="lbl">その他${i+1}</span><img alt="その他" src="${u}">
+    const el = $(`<div class="slot has"><span class="lbl">その他${i+1}</span><img alt="" src="${u}">
       <div class="memo">${esc(rec.memo||'')}</div>
       <div class="tools"><button class="tbtn arw">➜ 矢印${(rec.arrows||[]).length?'('+rec.arrows.length+')':''}</button><button class="tbtn">メモ</button><button class="tbtn">差し替え</button><button class="tbtn del">削除</button></div></div>`);
-    addOverlay(el, el.querySelector('img'), rec.arrows);
+    const img = el.querySelector('img');
+    retryImg(img, rec.key);
+    addOverlay(el, img, rec.arrows);
     const [ba,bm,br,bd] = el.querySelectorAll('.tbtn');
     ba.onclick = ()=> openArrowEditor(rec.key, `No.${no} その他${i+1}`, ()=> renderBridge(no));
     bm.onclick = async ()=>{
       const v = prompt('この写真のメモ（例：支承、伸縮装置、添架物）', rec.memo||''); if(v===null) return;
-      const {key, ...val} = rec; val.memo = v.trim();
-      await putRec(rec.key, val); renderBridge(no);
+      try{ await rewriteRec(rec.key, rec, {memo:v.trim()}); }
+      catch(e){ alert('メモを保存できませんでした：' + (e && e.message || e)); return; }
+      renderBridge(no);
     };
     br.onclick = ()=> pick(no, {k:EXTRA, n:'その他'+(i+1)}, rec);
     bd.onclick = async ()=>{
@@ -519,7 +559,7 @@ function arrowSvg(a, iw, ih, extra){
 function addOverlay(el, img, arrows){
   if(!arrows || !arrows.length) return;
   const put = ()=>{
-    const iw=img.naturalWidth, ih=img.naturalHeight; if(!iw) return;
+    const iw=img.naturalWidth, ih=img.naturalHeight; if(!iw || !img.isConnected) return;
     const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.setAttribute('class','ov'); svg.setAttribute('viewBox',`0 0 ${iw} ${ih}`); svg.setAttribute('preserveAspectRatio','xMidYMid meet');
     svg.innerHTML = arrows.map(a=>arrowSvg(a,iw,ih)).join('');
@@ -531,7 +571,7 @@ function addOverlay(el, img, arrows){
 async function burnArrows(blob, arrows){
   const bmp = await createImageBitmap(blob), iw=bmp.width, ih=bmp.height;
   const c = document.createElement('canvas'); c.width=iw; c.height=ih;
-  const g = c.getContext('2d'); g.drawImage(bmp,0,0);
+  const g = c.getContext('2d'); g.drawImage(bmp,0,0); bmp.close && bmp.close();
   for(const a of arrows){
     const pts = arrowPts(a.x1*iw,a.y1*ih,a.x2*iw,a.y2*ih,a.w*iw);
     g.beginPath(); pts.forEach((p,i)=> i ? g.lineTo(p[0],p[1]) : g.moveTo(p[0],p[1])); g.closePath();
@@ -539,11 +579,13 @@ async function burnArrows(blob, arrows){
     g.strokeStyle = a.c==='#ffffff' ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.85)'; g.stroke();
     g.fillStyle=a.c; g.fill();
   }
-  return await new Promise((res,rej)=> c.toBlob(b=> b?res(b):rej(new Error('変換失敗')),'image/jpeg',0.9));
+  const out = await new Promise((res,rej)=> c.toBlob(b=> b?res(b):rej(new Error('変換失敗')),'image/jpeg',0.9));
+  c.width = c.height = 0;   // iPadのcanvasメモリをすぐ返す
+  return out;
 }
 
 // ---- 矢印エディタ ----
-const AE = { key:null, rec:null, arrows:[], sel:-1, iw:0, ih:0, scale:1, drag:null, color:ACOLORS[0], w:0.012, onDone:null };
+const AE = { key:null, rec:null, arrows:[], sel:-1, iw:0, ih:0, scale:1, drag:null, color:ACOLORS[0], w:0.012, onDone:null, busy:false };
 const aeEl = document.getElementById('arrowEd'), aeImg = document.getElementById('aeImg'),
       aeSvg = document.getElementById('aeSvg'), aeStage = document.getElementById('aeStage'), aeW = document.getElementById('aeW');
 let aeUrl = null;
@@ -554,7 +596,9 @@ async function openArrowEditor(key, title, onDone){
   AE.arrows = (rec.arrows||[]).map(a=>({...a}));
   document.getElementById('aeTitle').textContent = title + ' の矢印';
   if(aeUrl) URL.revokeObjectURL(aeUrl);
-  aeUrl = URL.createObjectURL(rec.blob); aeImg.src = aeUrl; await aeImg.decode();
+  aeUrl = URL.createObjectURL(rec.blob); aeImg.src = aeUrl;
+  try{ await aeImg.decode(); }
+  catch(e){ alert('写真を読み込めませんでした。少し待ってからもう一度開くか、「差し替え」で入れ直してください。'); return; }
   AE.iw=aeImg.naturalWidth; AE.ih=aeImg.naturalHeight;
   aeEl.classList.add('show'); document.body.style.overflow='hidden';
   aeLayout(); aeSwatches(); aeSync();
@@ -641,12 +685,17 @@ document.getElementById('aeFlip').onclick = ()=>{
   const a = AE.arrows[AE.sel]; if(!a) return; [a.x1,a.x2,a.y1,a.y2]=[a.x2,a.x1,a.y2,a.y1]; aeDraw();
 };
 document.getElementById('aeDel').onclick = ()=>{ if(AE.sel<0) return; AE.arrows.splice(AE.sel,1); AE.sel=-1; aeSync(); };
-function aeClose(){ aeEl.classList.remove('show'); document.body.style.overflow=''; }
+function aeClose(){
+  aeEl.classList.remove('show'); document.body.style.overflow='';
+  aeImg.removeAttribute('src'); if(aeUrl){ URL.revokeObjectURL(aeUrl); aeUrl=null; }
+}
 document.getElementById('aeCancel').onclick = aeClose;
 document.getElementById('aeDone').onclick = async ()=>{
-  const {key, ...val} = AE.rec; val.arrows = AE.arrows;
-  try{ await putRec(AE.key, val); toast(`矢印 ${AE.arrows.length} 本を保存しました`); }
-  catch(e){ alert('保存できませんでした：' + e.message); return; }
+  if(AE.busy) return;   // 連打で二重保存しない
+  AE.busy = true;
+  try{ await rewriteRec(AE.key, AE.rec, {arrows:AE.arrows}); toast(`矢印 ${AE.arrows.length} 本を保存しました`); }
+  catch(e){ alert('保存できませんでした：' + (e && e.message || e)); return; }
+  finally{ AE.busy = false; }
   aeClose(); AE.onDone && AE.onDone();
 };
 
@@ -659,24 +708,30 @@ async function exportZip(){
   for(const key of keys){ const [no,k] = key.split('|'); recs.push({no:+no, k, key, rec: await getPhoto(key)}); }
   const order = (k)=>{ const i = SLOTS.findIndex(s=>s.k===k); return i<0 ? 99 : i; };
   recs.sort((a,b)=> a.no-b.no || order(a.k)-order(b.k) || a.rec.ts-b.rec.ts);
-  const exN = new Map();
+  const exN = new Map(), bad = [];
   for(const r of recs){
     const p = String(r.no).padStart(2,'0'); let fname, label;
     if(r.k===EXTRA){ const n=(exN.get(r.no)||0)+1; exN.set(r.no,n); fname=`${p}_sonota_${String(n).padStart(2,'0')}.jpg`; label='その他'+n; }
     else { fname=`${p}_${r.k}.jpg`; label=SLOTS[order(r.k)].n; }
-    const outBlob = (r.rec.arrows && r.rec.arrows.length) ? await burnArrows(r.rec.blob, r.rec.arrows) : r.rec.blob;
-    files.push({name:fname, data:new Uint8Array(await outBlob.arrayBuffer())});
+    let data;
+    try{
+      const outBlob = (r.rec.arrows && r.rec.arrows.length) ? await burnArrows(r.rec.blob, r.rec.arrows) : r.rec.blob;
+      data = new Uint8Array(await outBlob.arrayBuffer());
+    }catch(e){ bad.push(`No.${r.no} ${label}`); continue; }   // 読めない写真は飛ばして、最後に知らせる
+    files.push({name:fname, data});
     rows.push([r.no, names.get(r.no)||'', label, fname, r.rec.memo||'']);
   }
-  const csv = '\ufeff' + rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  if(!files.length){ alert('写真を読み込めませんでした。少し待ってからもう一度お試しください。'); return; }
+  const csv = '﻿' + rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
   files.push({name:'photo_list.csv', data:new TextEncoder().encode(csv)});
   // 元写真の仕分け用ログ：踏査開始の時刻と、枠に入れた写真の撮影時刻
   const ev = loadLog().map(x=>({no:x.no, kind: x.end ? '終了' : '開始', t:x.t, part:''}));
   for(const r of recs){ if(r.rec.shot) ev.push({no:r.no, kind:'写真', t:r.rec.shot, part: r.k===EXTRA ? 'その他' : SLOTS[order(r.k)].n}); }
   ev.sort((a,b)=>a.t-b.t);
   const lrows = [['No','橋梁名','種別','日時','部位'], ...ev.map(e=>[e.no, names.get(e.no)||'', e.kind, fmtDT(e.t), e.part])];
-  const lcsv = '\ufeff' + lrows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const lcsv = '﻿' + lrows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
   files.push({name:'bridge_log.csv', data:new TextEncoder().encode(lcsv)});
+  if(bad.length && !confirm(`次の写真を読み込めませんでした（ZIPに入りません）。\n${bad.join('\n')}\n\n「差し替え」で入れ直してから保存するのがおすすめです。\nこのままZIP保存しますか？`)) return;
   const d = new Date(), stamp = d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')
             +'_'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');
   const safe = curProj().name.replace(/[\\/:*?"<>|\s]+/g,'_').slice(0,40) || 'gyomu';
